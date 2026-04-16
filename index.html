@@ -1,0 +1,269 @@
+<!--
+CandyCrush
+Your Name:  葛清宇
+Collaborators: 鲍康琦 肖振豪
+-->
+<!DOCTYPE html>
+<html>
+<!--
+/* Copyright (c) 2017 MIT 6.813/6.831 course staff, all rights reserved.
+ * Redistribution of original or derived work requires permission of course staff.
+ */
+-->
+
+<head>
+<meta charset="utf-8">
+<title>CandyCrush</title>
+<link rel="stylesheet" href="./css/bootstrap.css">
+<link rel="stylesheet" href="./css/mainLayout.css">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="./js/jquery.min.js"></script>
+<script src="./js/seedrandom.min.js"></script>
+<script src="./js/candy.js"></script>
+<script src="./js/board.js"></script>
+<script src="./js/rules.js"></script>
+
+<script>
+Math.seedrandom(0);
+
+$.extend({
+  getUrlVars: function() {
+    var vars = [], pair;
+    var pairs = window.location.search.substr(1).split('&');
+    for (var i = 0; i < pairs.length; i++) {
+      pair = pairs[i].split('=');
+      vars.push(pair[0]);
+      vars[pair[0]] = pair[1] && decodeURIComponent(pair[1].replace(/\+/g, ' '));
+    }
+    return vars;
+  },
+  getUrlVar: function(name) { return $.getUrlVars()[name]; }
+});
+
+var DEFAULT_BOARD_SIZE = 8;
+var board, rules;
+var crushing = false;
+
+if ($.getUrlVar('size') && $.getUrlVar('size') >= 3) {
+  board = new Board($.getUrlVar('size'));
+} else {
+  board = new Board(DEFAULT_BOARD_SIZE);
+}
+rules = new Rules(board);
+
+// Returns candy image filename for a color
+function candyImage(color) {
+  return './graphics/' + color + '-candy.png';
+}
+
+// Returns cell id string for row,col
+function cellId(row, col) {
+  return 'cell-' + row + '-' + col;
+}
+
+// Build the board table
+function buildBoardTable() {
+  var $table = $('<table id="board-table"></table>');
+  for (var r = 0; r < board.boardSize; r++) {
+    var $tr = $('<tr></tr>');
+    for (var c = 0; c < board.boardSize; c++) {
+      var cls = ((r + c) % 2 === 0) ? 'candy-cell-light' : 'candy-cell-dark';
+      // label: col letter (a-h) + row number (1-8)
+      var label = String.fromCharCode(97 + c) + (r + 1);
+      var $td = $('<td></td>').attr('id', cellId(r, c)).addClass(cls).attr('data-label', label);
+      $tr.append($td);
+    }
+    $table.append($tr);
+  }
+  $('#mainColumn').empty().append($table);
+}
+
+// Parse candy position input like "a1", "B3" (case-insensitive, optional spaces)
+function parseInput(val) {
+  val = val.trim().toLowerCase();
+  var m = val.match(/^([a-h])([1-8])$/);
+  if (!m) return null;
+  var col = m[1].charCodeAt(0) - 97;
+  var row = parseInt(m[2]) - 1;
+  return { row: row, col: col };
+}
+
+// Update direction buttons enabled/disabled state based on input and valid moves
+function updateButtons() {
+  if (crushing) {
+    $('#btn-up,#btn-down,#btn-left,#btn-right').prop('disabled', true)
+      .css('background-color', '');
+    $('#crush-btn').prop('disabled', true).css('background-color', 'yellow');
+    return;
+  }
+  var val = $('#candy-input').val();
+  var pos = parseInput(val);
+  var btnIds = { up: '#btn-up', down: '#btn-down', left: '#btn-left', right: '#btn-right' };
+
+  if (!pos) {
+    $.each(btnIds, function(d, id) {
+      $(id).prop('disabled', true).css('background-color', '');
+    });
+  } else {
+    var candy = board.getCandyAt(pos.row, pos.col);
+    $.each(btnIds, function(d, id) {
+      if (candy && rules.isMoveTypeValid(candy, d)) {
+        $(id).prop('disabled', false).css('background-color', 'yellow');
+      } else {
+        $(id).prop('disabled', true).css('background-color', '');
+      }
+    });
+  }
+
+  // Crush Once: enabled only if there are crushable candies
+  var crushable = rules.getCandyCrushes();
+  if (crushable.length > 0) {
+    $('#crush-btn').prop('disabled', false).css('background-color', 'yellow');
+  } else {
+    $('#crush-btn').prop('disabled', true).css('background-color', '');
+  }
+}
+
+// Perform one crush cycle with 500ms delay before moveCandiesDown
+function doCrushOnce() {
+  var crushable = rules.getCandyCrushes();
+  if (crushable.length === 0) return;
+  crushing = true;
+  updateButtons();
+  rules.removeCrushes(crushable);
+  setTimeout(function() {
+    rules.moveCandiesDown();
+    crushing = false;
+    updateButtons();
+  }, 500);
+}
+
+$(document).ready(function() {
+  buildBoardTable();
+  rules.prepareNewGame();
+  updateButtons();
+
+  // New Game button
+  $('#new-game-btn').on('click', function() {
+    Math.seedrandom(0);
+    board.clear();
+    rules.prepareNewGame();
+    board.resetScore();
+    $('#score-display').text('0');
+    updateButtons();
+  });
+
+  // Direction buttons
+  $('#btn-up,#btn-down,#btn-left,#btn-right').on('click', function() {
+    var dir = $(this).data('dir');
+    var pos = parseInput($('#candy-input').val());
+    if (!pos) return;
+    var candy = board.getCandyAt(pos.row, pos.col);
+    if (!candy) return;
+    if (!rules.isMoveTypeValid(candy, dir)) return;
+    var toCandy = board.getCandyInDirection(candy, dir);
+    board.flipCandies(candy, toCandy);
+    var newLabel = String.fromCharCode(97 + candy.col) + (candy.row + 1);
+    $('#candy-input').val(newLabel).focus();
+    updateButtons();
+  });
+
+  $('#crush-btn').on('click', function() { doCrushOnce(); });
+
+  $('#candy-input').on('input', function() {
+    updateButtons();
+    // Show candidates when only one char typed
+    var val = $(this).val().trim().toLowerCase();
+    if (val.length === 1 && val >= 'a' && val <= 'h') {
+      var candidates = [];
+      for (var r = 1; r <= board.boardSize; r++) candidates.push(val + r);
+      $('#move-label').text('Move: ' + candidates.join(', '));
+    } else {
+      $('#move-label').text('Move');
+    }
+  });
+
+  // Keyboard shortcuts: n = New Game, space = Crush Once
+  $(document).on('keydown', function(evt) {
+    if ($(evt.target).is('input[type=text]')) return;
+    if (evt.key === 'n' || evt.key === 'N') $('#new-game-btn').trigger('click');
+    if (evt.key === ' ') { evt.preventDefault(); $('#crush-btn').trigger('click'); }
+  });
+});
+
+// add a candy to the board
+$(board).on('add', function(e, info) {
+  var $td = $('#' + cellId(info.toRow, info.toCol));
+  var label = $td.attr('data-label');
+  $td.empty().append(
+    $('<img>').attr('src', candyImage(info.candy.color)).attr('alt', info.candy.color)
+  ).append($('<div></div>').text(label));
+});
+
+// move a candy on the board
+$(board).on('move', function(e, info) {
+  var $to = $('#' + cellId(info.toRow, info.toCol));
+  $to.empty().append(
+    $('<img>').attr('src', candyImage(info.candy.color)).attr('alt', info.candy.color)
+  ).append($('<div></div>').text($to.attr('data-label')));
+  // Clear source only if board model says it's empty (handles flip: partner event fills it)
+  if (!board.getCandyAt(info.fromRow, info.fromCol)) {
+    $('#' + cellId(info.fromRow, info.fromCol)).empty();
+  }
+});
+
+// remove a candy from the board
+$(board).on('remove', function(e, info) {
+  $('#' + cellId(info.fromRow, info.fromCol)).empty();
+});
+
+// score update
+$(board).on('scoreUpdate', function(e, info) {
+  $('#score-display').text(info.score);
+});
+</script>
+</head>
+
+<body>
+<div class="container">
+  <div class="row">
+
+    <!-- Column 1: title, score, New Game -->
+    <div class="col-md-4" id="firstColumn">
+      <div>
+        <h3>Candy Crush</h3>
+        <p>Score: <span id="score-display">0</span></p>
+        <input type="button" id="new-game-btn" class="btn btn-primary" value="New Game">
+      </div>
+    </div>
+
+    <!-- Column 2: game board -->
+    <div class="col-md-4" id="mainColumn">
+    </div>
+
+    <!-- Column 3: move controls -->
+    <div class="col-md-4" id="lastColumn">
+      <div>
+        <label id="move-label">Move</label><br>
+        <input type="text" id="candy-input" class="form-control" placeholder="e.g. a1" style="width:80px;display:inline-block;">
+
+        <div class="arrow-grid" style="margin-top:10px;">
+          <div></div>
+          <input type="button" id="btn-up"    class="btn" value="&#8593;" data-dir="up"    disabled>
+          <div></div>
+          <input type="button" id="btn-left"  class="btn" value="&#8592;" data-dir="left"  disabled>
+          <div></div>
+          <input type="button" id="btn-right" class="btn" value="&#8594;" data-dir="right" disabled>
+          <div></div>
+          <input type="button" id="btn-down"  class="btn" value="&#8595;" data-dir="down"  disabled>
+          <div></div>
+        </div>
+
+        <input type="button" id="crush-btn" class="btn btn-warning" value="Crush Once" disabled style="margin-top:10px;">
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
